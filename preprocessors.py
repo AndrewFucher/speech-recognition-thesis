@@ -6,8 +6,8 @@ import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.interactive(False)
 
-class WavReader:
-    """Read wav file with librosa and return audio and label
+class AudioReader:
+    """Read audio file with librosa and return audio and label
     
     Attributes:
         frame_length (int): Length of the frames in samples.
@@ -63,9 +63,9 @@ class WavReader:
         """Get mfcc"""
         audio, orig_sr = librosa.load(audio_path)
         if orig_sr != samplerate:
-            audio = librosa.resample(audio, orig_sr, samplerate)
+            audio = librosa.resample(audio, orig_sr=orig_sr, target_sr=samplerate)
         
-        mfcc = librosa.feature.mfcc(audio, samplerate, n_mfcc = n_mfcc)
+        mfcc = librosa.feature.mfcc(y=audio, sr=samplerate, n_mfcc = n_mfcc)
         
         return mfcc
 
@@ -92,29 +92,28 @@ class WavReader:
         plt.show()
 
     @staticmethod
-    def plot_spectrogram(spectrogram: np.ndarray, title:str = "", transpose: bool = True, invert: bool = True) -> None:
+    def plot_spectrogram(spectrogram: typing.Union[np.ndarray, str], samplerate: int = None, title:str = "", transpose: bool = True, invert: bool = True) -> None:
         """Plot the spectrogram of a WAV file
         Args:
-            spectrogram (np.ndarray): Spectrogram of the WAV file.
+            spectrogram (np.ndarray | str): Spectrogram of the audio file or path to file.
             title (str, optional): Title of the plot. Defaults to None.
             transpose (bool, optional): Transpose the spectrogram. Defaults to True.
             invert (bool, optional): Invert the spectrogram. Defaults to True.
         """
-        if transpose:
-            spectrogram = spectrogram.T
-        
-        if invert:
-            spectrogram = spectrogram[::-1]
-
-        plt.figure(figsize=(15, 5))
-        plt.imshow(spectrogram, aspect='auto', origin='lower')
-        plt.title(f'Spectrogram: {title}')
-        plt.xlabel('Time')
-        plt.ylabel('Frequency')
-        plt.colorbar()
-        plt.tight_layout()
+        data = np.array([])
+        if isinstance(spectrogram, str):
+            data, sr = librosa.load(spectrogram)
+            if samplerate is None:
+                samplerate = sr
+            if samplerate != sr:
+                data = librosa.resample(data, orig_sr=sr, target_sr=samplerate)
+        else:
+            data = spectrogram
+            if samplerate is None:
+                samplerate = 16000
+        powerSpectrum, frequenciesFound, time, imageAxis = plt.specgram(data, Fs=samplerate)
         plt.show()
-
+        
     def __call__(self, audio_path: str, label: typing.Any):
         """
         Extract the spectrogram and label of a WAV file.

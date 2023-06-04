@@ -2,7 +2,7 @@ import tarfile
 from urllib import request
 
 import os.path
-
+import pathlib
 
 import os
 import copy
@@ -19,6 +19,7 @@ logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 LIBRISPEECH_DATASET_URL = "https://www.openslr.org/resources/12/dev-clean.tar.gz"
 ARCHIVE_PATH = "./data/dev-clean.tar.gz"
 EXTRACTED_DATA_PATH = "./data/speech"
+VOCAB = "abcdefghijklmnopqrstuvwxyz' "
 
 class DataProvider:
     def __init__(
@@ -41,7 +42,6 @@ class DataProvider:
             batch_size (int): The number of samples to include in each batch. Defaults to 4.
             shuffle (bool): Whether to shuffle the data. Defaults to True.
             initial_epoch (int): The initial epoch. Defaults to 1.
-            augmentors (list, optional): List of augmentor functions. Defaults to None.
             transformers (list, optional): List of transformer functions. Defaults to None.
             skip_validation (bool, optional): Whether to skip validation. Defaults to True.
             limit (int, optional): Limit the number of samples in the dataset. Defaults to None.
@@ -211,8 +211,8 @@ class DataProvider:
 
         # Then transform and postprocess the batch data
         for objects in [self._transformers]:
-            for object in objects:
-                data, annotation = object(data, annotation)
+            for obj in objects:
+                data, annotation = obj(data, annotation)
 
         # Convert to numpy array if not already
         if not isinstance(data, np.ndarray):
@@ -244,11 +244,62 @@ class DataProvider:
 
         return np.array(batch_data), np.array(batch_annotations)
 
+    
+def getDataProvider(n_mfcc: int = 20) -> DataProvider:
+    dataset = getDataset()
+    max_mfcc_length, max_text_length, max_mfcc_length = 0, 0, 0
+    for file_path, label in tqdm(dataset):
+        spectrogram = WavReader.get_mfcc(file_path, n_mfcc=n_mfcc)
+        valid_label = [c for c in label.lower() if c in VOCAB]
+        max_text_length = max(max_text_length, len(valid_label))
+        max_mfcc_length = max(max_mfcc_length, spectrogram.shape[1])
+        input_shape = [max_spectrogram_length, spectrogram.shape[0]]
+    data_provider = DataProvider(
+        dataset=dataset,
+        skip_validation=True,
+        batch_size=configs.batch_size,
+        data_preprocessors=[
+            WavReader(),
+            ],
+        transformers=[
+            SpectrogramPadding(max_spectrogram_length=max_mfcc_length, padding_value=0),
+            LabelIndexer(VOCAB),
+            LabelPadding(max_word_length=max_text_length, padding_value=len(VOCAB)),
+            ],
+    )
+    return data_provider
 
-if not os.path.isfile(ARCHIVE_PATH):
-    request.urlretrieve(LIBRISPEECH_DATASET_URL, ARCHIVE_PATH)
+def getDataset() -> typing.List[typing.List[str]]:
+    raw_dataset = getRawDataset()
+    
+    for i in range(len(raw_dataset)):
+        raw_dataset[i] = [raw_dataset[i][0], raw_dataset[i][1].lower()]
+        
+    return raw_dataset
+    
+def getRawDataset() -> typing.List[typing.List[str]]:
+    transcription_paths = list(pathlib.Path(".").rglob("*.trans.txt"))
+    audios_paths = list(pathlib.Path(".").rglob("*.flac"))
+    name_to_path_audios = {i.stem: str(i.absolute()) for i in audios_paths}
 
-if not os.path.isdir(EXTRACTED_DATA_PATH):
-    file = tarfile.open(ARCHIVE_PATH)
-    file.extractall(EXTRACTED_DATA_PATH)
-    file.close()
+    all_transcriptions = ""
+    for transcription_path in transcription_paths:
+        with open(str(transcription_path.absolute()), 'r') as file:
+            text = file.read()
+            all_transcriptions += text
+
+    dataset = []
+    for record in list(filter(None, all_transcriptions.split('\n'))):
+        audio_file_name, label = record.split(' ', 1)
+        dataset.append([name_to_path_audios[audio_file_name], label])
+    
+    return dataset
+
+def tryLoadData() -> None:
+    if not os.path.isfile(ARCHIVE_PATH):
+        request.urlretrieve(LIBRISPEECH_DATASET_URL, ARCHIVE_PATH)
+
+    if not os.path.isdir(EXTRACTED_DATA_PATH):
+        file = tarfile.open(ARCHIVE_PATH)
+        file.extractall(EXTRACTED_DATA_PATH)
+        file.close()
