@@ -10,8 +10,12 @@ import typing
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+import pickle
 
-from transformers import Transformer
+from tensorflow.python.keras.utils import data_utils
+
+from transformers import Transformer, LabelIndexer, LabelPadding, SpectrogramPadding
+from preprocessors import AudioReader
 
 import logging
 logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -20,8 +24,9 @@ LIBRISPEECH_DATASET_URL = "https://www.openslr.org/resources/12/dev-clean.tar.gz
 ARCHIVE_PATH = "./data/dev-clean.tar.gz"
 EXTRACTED_DATA_PATH = "./data/speech"
 VOCAB = "abcdefghijklmnopqrstuvwxyz' "
+DATA_PROVIDER_PICKLE_PATH = "./data/pickle/data_provider.pkl"
 
-class DataProvider:
+class DataProvider(data_utils.Sequence):
     def __init__(
         self, 
         dataset: typing.Union[str, list, pd.DataFrame],
@@ -97,6 +102,26 @@ class DataProvider:
                 self.logger.warning(f"Transformer {transformer} is not an instance of Transformer.")
 
         return self._transformers
+    
+    @property
+    def data_preprocessors(self) -> typing.List[typing.Callable]:
+        """ Return data preprocessors """
+        return self._data_preprocessors
+
+    @data_preprocessors.setter
+    def data_preprocessors(self, data_preprocessors: typing.List[typing.Callable]):
+        """ Decorator for adding data preprocessors to the DataProvider """
+        for data_preprocessor in data_preprocessors:
+            if isinstance(data_preprocessor, typing.Callable):
+                if self._data_preprocessors is not None:
+                    self._data_preprocessors.append(data_preprocessor)
+                else:
+                    self._data_preprocessors = [data_preprocessor]
+
+            else:
+                self.logger.warning(f"Transformer {data_preprocessor} is not an instance of Transformer.")
+
+        return self._data_preprocessors
 
     @property
     def epoch(self) -> int:
@@ -242,24 +267,34 @@ class DataProvider:
             batch_data.append(data)
             batch_annotations.append(annotation)
 
+        from IPython import embed
+        embed()
         return np.array(batch_data), np.array(batch_annotations)
 
     
-def getDataProvider(n_mfcc: int = 20) -> DataProvider:
+def getDataProvider(n_mfcc: int = 13, load_from_pickle: bool = True) -> DataProvider:
+    if load_from_pickle:
+        if not os.path.isfile(DATA_PROVIDER_PICKLE_PATH):
+            print("Pickle does not exist")
+        else:
+            with open(DATA_PROVIDER_PICKLE_PATH, "rb") as pckl:
+                data_provider, input_shape = pickle.load(pckl)
+                return data_provider, input_shape
     dataset = getDataset()
     max_mfcc_length, max_text_length, max_mfcc_length = 0, 0, 0
+    input_shape = [None]
     for file_path, label in tqdm(dataset):
-        spectrogram = WavReader.get_mfcc(file_path, n_mfcc=n_mfcc)
+        spectrogram = AudioReader.get_mfcc(file_path, n_mfcc=n_mfcc)
         valid_label = [c for c in label.lower() if c in VOCAB]
         max_text_length = max(max_text_length, len(valid_label))
         max_mfcc_length = max(max_mfcc_length, spectrogram.shape[1])
-        input_shape = [max_spectrogram_length, spectrogram.shape[0]]
+        input_shape = [max_mfcc_length, spectrogram.shape[0]]
     data_provider = DataProvider(
         dataset=dataset,
         skip_validation=True,
-        batch_size=configs.batch_size,
+        batch_size=8,
         data_preprocessors=[
-            WavReader(),
+            AudioReader(),
             ],
         transformers=[
             SpectrogramPadding(max_spectrogram_length=max_mfcc_length, padding_value=0),
@@ -267,7 +302,11 @@ def getDataProvider(n_mfcc: int = 20) -> DataProvider:
             LabelPadding(max_word_length=max_text_length, padding_value=len(VOCAB)),
             ],
     )
-    return data_provider
+    filePath = pathlib.Path(DATA_PROVIDER_PICKLE_PATH)
+    filePath.parent.mkdir(exist_ok=True, parents=True)
+    with open(filePath, "wb") as pckl:
+        pickle.dump((data_provider, input_shape), pckl)
+    return data_provider, input_shape
 
 def getDataset() -> typing.List[typing.List[str]]:
     raw_dataset = getRawDataset()

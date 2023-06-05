@@ -3,8 +3,8 @@ import librosa
 import librosa.display
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.interactive(False)
+# import matplotlib
+# matplotlib.interactive(False)
 
 class AudioReader:
     """Read audio file with librosa and return audio and label
@@ -13,6 +13,8 @@ class AudioReader:
         frame_length (int): Length of the frames in samples.
         frame_step (int): Step size between frames in samples.
         fft_length (int): Number of FFT components.
+        samplerate (int): Sample rate of audio.
+        n_mfcc (int): number of mel-frequency cepstrum coeffients.
     """
     def __init__(
         self, 
@@ -20,12 +22,14 @@ class AudioReader:
         frame_step: int=160,
         fft_length: int=384,
         samplerate: int = 16000,
+        n_mfcc: int = 13,
         *args, **kwargs
         ) -> None:
         self.frame_length = frame_length
         self.frame_step = frame_step
         self.fft_length = fft_length
         self.samplerate = samplerate
+        self.n_mfcc = n_mfcc
 
     @staticmethod
     def get_spectrogram(wav_path: str, frame_length: int, frame_step: int, fft_length: int) -> np.ndarray:
@@ -59,7 +63,7 @@ class AudioReader:
         return spectrogram
     
     @staticmethod
-    def get_mfcc(audio_path: str, samplerate: int = 16000, n_mfcc: int = 20) -> np.ndarray:
+    def get_mfcc(audio_path: str, samplerate: int = 16000, n_mfcc: int = 13) -> np.ndarray:
         """Get mfcc"""
         audio, orig_sr = librosa.load(audio_path)
         if orig_sr != samplerate:
@@ -123,4 +127,4 @@ class AudioReader:
         Returns:
             Tuple[np.ndarray, typing.Any]: Spectrogram of the WAV file and its label.
         """
-        return self.get_mfcc(audio_path, self.samplerate), label
+        return self.get_mfcc(audio_path, self.samplerate, n_mfcc = self.n_mfcc), label
