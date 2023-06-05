@@ -98,7 +98,9 @@ class CapsuleLayer(layers.Layer):
     def __init__(self, num_capsule, dim_capsule, routings=3,
                  kernel_initializer='glorot_uniform',
                  **kwargs):
-        super(CapsuleLayer, self).__init__(**kwargs)
+        self.as_super = super(CapsuleLayer, self)
+        self.as_super.__init__(**kwargs)
+        # super().__init__(**kwargs)
         self.num_capsule = num_capsule
         self.dim_capsule = dim_capsule
         self.routings = routings
@@ -134,11 +136,16 @@ class CapsuleLayer(layers.Layer):
         # inputs_hat.shape = [None, num_capsule, input_num_capsule, dim_capsule]
         inputs_hat = tf.squeeze(tf.map_fn(lambda x: tf.matmul(self.W, x), elems=inputs_tiled))
 
+        print(inputs_hat)
+        print(f"|{[inputs.shape, self.num_capsule, 1, self.input_num_capsule]}|")
+        print(f"|{[inputs]}|")
         # Begin: Routing algorithm ---------------------------------------------------------------------#
         # The prior for coupling coefficient, initialized as zeros.
         # b.shape = [None, self.num_capsule, 1, self.input_num_capsule].
-        b = tf.zeros(shape=[inputs.shape[0], self.num_capsule, 1, self.input_num_capsule])
+        # b = tf.zeros(shape=[inputs.shape[0], self.num_capsule, 1, self.input_num_capsule])
+        b = tf.zeros(shape=[8, self.num_capsule, 1, self.input_num_capsule])
 
+        print(b)
         assert self.routings > 0, 'The routings should be > 0.'
         for i in range(self.routings):
             # c.shape=[batch_size, num_capsule, 1, input_num_capsule]

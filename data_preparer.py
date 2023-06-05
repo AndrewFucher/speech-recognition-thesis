@@ -12,9 +12,9 @@ import pandas as pd
 from tqdm import tqdm
 import pickle
 
-from tensorflow.python.keras.utils import data_utils
+import tensorflow as tf
 
-from transformers import Transformer, LabelIndexer, LabelPadding, SpectrogramPadding
+from transformers import Transformer, LabelIndexer, LabelPadding, MfccPadding
 from preprocessors import AudioReader
 
 import logging
@@ -26,7 +26,7 @@ EXTRACTED_DATA_PATH = "./data/speech"
 VOCAB = "abcdefghijklmnopqrstuvwxyz' "
 DATA_PROVIDER_PICKLE_PATH = "./data/pickle/data_provider.pkl"
 
-class DataProvider(data_utils.Sequence):
+class DataProvider(tf.keras.utils.Sequence):
     def __init__(
         self, 
         dataset: typing.Union[str, list, pd.DataFrame],
@@ -264,15 +264,15 @@ class DataProvider(data_utils.Sequence):
                 self.logger.warning("Data or annotation is None, skipping.")
                 continue
 
-            batch_data.append(data)
-            batch_annotations.append(annotation)
+            batch_data.append(data.astype(object))
+            batch_annotations.append(annotation.astype(object))
 
-        from IPython import embed
-        embed()
-        return np.array(batch_data), np.array(batch_annotations)
+        # from IPython import embed
+        # embed()
+        return [np.array(batch_data, dtype=np.float32), np.array(batch_annotations, dtype=np.int_)], np.array(batch_annotations, dtype=np.int_)
 
     
-def getDataProvider(n_mfcc: int = 13, load_from_pickle: bool = True) -> DataProvider:
+def getDataProvider(n_mfcc: int = 13, load_from_pickle: bool = True) -> typing.Tuple[DataProvider, typing.Tuple]:
     if load_from_pickle:
         if not os.path.isfile(DATA_PROVIDER_PICKLE_PATH):
             print("Pickle does not exist")
@@ -288,7 +288,9 @@ def getDataProvider(n_mfcc: int = 13, load_from_pickle: bool = True) -> DataProv
         valid_label = [c for c in label.lower() if c in VOCAB]
         max_text_length = max(max_text_length, len(valid_label))
         max_mfcc_length = max(max_mfcc_length, spectrogram.shape[1])
-        input_shape = [max_mfcc_length, spectrogram.shape[0]]
+    input_shape = [n_mfcc, max_mfcc_length]
+    # from IPython import embed
+    # embed()
     data_provider = DataProvider(
         dataset=dataset,
         skip_validation=True,
@@ -297,7 +299,7 @@ def getDataProvider(n_mfcc: int = 13, load_from_pickle: bool = True) -> DataProv
             AudioReader(),
             ],
         transformers=[
-            SpectrogramPadding(max_spectrogram_length=max_mfcc_length, padding_value=0),
+            MfccPadding(max_mfcc_length=max_mfcc_length, padding_value=0),
             LabelIndexer(VOCAB),
             LabelPadding(max_word_length=max_text_length, padding_value=len(VOCAB)),
             ],

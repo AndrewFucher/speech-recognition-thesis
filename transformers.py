@@ -131,3 +131,25 @@ class SpectrogramPadding(Transformer):
         padded_spectrogram = np.pad(spectrogram, ((self.max_spectrogram_length - spectrogram.shape[0], 0),(0,0)), mode='constant', constant_values=self.padding_value)
 
         return padded_spectrogram, label
+
+class MfccPadding(Transformer):
+    """Pad mfcc to max_mfcc_length
+    
+    Attributes:
+        max_mfcc_length (int): Maximum length of mfcc
+        padding_value (int): Value to pad
+    """
+    def __init__(
+        self, 
+        max_mfcc_length: int, 
+        padding_value: int
+        ) -> None:
+        self.max_mfcc_length = max_mfcc_length
+        self.padding_value = padding_value
+
+    def __call__(self, mfcc: np.ndarray, label: np.ndarray):
+        # from IPython import embed
+        # embed()
+        padded_mfcc = np.pad(mfcc, ((0,0),(0, self.max_mfcc_length - mfcc.shape[1])), mode='constant', constant_values=self.padding_value)
+
+        return padded_mfcc, label

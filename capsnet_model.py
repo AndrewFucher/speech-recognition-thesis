@@ -64,26 +64,28 @@ def CapsNet(input_shape, n_class, routings, batch_size):
     out_caps = Length(name='capsnet')(digitcaps)
 
     # Decoder network.
-    y = layers.Input(shape=(n_class,))
+    print((n_class,))
+    y = layers.Input(shape=(n_class,), name="input2")
     masked_by_y = Mask()([digitcaps, y])  # The true label is used to mask the output of capsule layer. For training
     masked = Mask()(digitcaps)  # Mask using the capsule with maximal length. For prediction
 
     # Shared Decoder model in training and prediction
     decoder = models.Sequential(name='decoder')
-    decoder.add(layers.Dense(512, activation='relu', input_dim=16 * n_class))
-    decoder.add(layers.Dense(1024, activation='relu'))
-    decoder.add(layers.Dense(np.prod(input_shape), activation='sigmoid'))
+    decoder.add(layers.Dense(512, activation='relu', input_dim=16 * n_class, name="dense11"))
+    decoder.add(layers.Dense(1024, activation='relu', name="dense22"))
+    decoder.add(layers.Dense(np.prod(input_shape), activation='sigmoid', name="dense33"))
     decoder.add(layers.Reshape(target_shape=input_shape, name='out_recon'))
 
     # Models for training and evaluation (prediction)
-    train_model = models.Model([x, y], [out_caps, decoder(masked_by_y)])
-    eval_model = models.Model(x, [out_caps, decoder(masked)])
+    train_model = models.Model([inputs, y], [out_caps, decoder(masked_by_y)])
+    train_model._name="train_model_1111"
+    eval_model = models.Model(inputs, [out_caps, decoder(masked)])
 
     # manipulate model
     noise = layers.Input(shape=(n_class, 16))
     noised_digitcaps = layers.Add()([digitcaps, noise])
     masked_noised_y = Mask()([noised_digitcaps, y])
-    manipulate_model = models.Model([x, y, noise], decoder(masked_noised_y))
+    manipulate_model = models.Model([inputs, y, noise], decoder(masked_noised_y))
     return train_model, eval_model, manipulate_model
 
 
@@ -272,6 +274,7 @@ def main():
     if not args.testing:
         # train(model=model, data=((x_train, y_train), (x_test, y_test)), args=args)
         train(model=model, dataprovider=dataprovider, args=args)
+        pass
     else:  # as long as weights are given, will run testing
         if args.weights is None:
             print('No weights are provided. Will test using random initialized weights.')
