@@ -160,4 +160,8 @@ cython_debug/
 #.idea/
 
 data/
+result/
+
 .ipynb_checkpoints/
+
+.vscode/

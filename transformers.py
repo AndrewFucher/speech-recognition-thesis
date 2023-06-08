@@ -91,8 +91,8 @@ class LabelIndexer(Transformer):
         ) -> None:
         self.vocab = vocab
 
-    def __call__(self, data: np.ndarray, label: np.ndarray):
-        return data, np.array([self.vocab.index(l) for l in label if l in self.vocab])
+    def __call__(self, data: np.ndarray, label: str):
+        return data, np.array([1 if label == i else 0 for i in self.vocab])
 
 class LabelPadding(Transformer):
     """Pad label to max_word_length

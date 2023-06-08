@@ -10,6 +10,7 @@ Author: Xifeng Guo, E-mail: `guoxifeng1990@163.com`, Github: `https://github.com
 import tensorflow as tf
 import tensorflow.keras.backend as K
 from tensorflow.keras import initializers, layers
+import sys
 
 
 class Length(layers.Layer):
@@ -51,9 +52,12 @@ class Mask(layers.Layer):
         else:  # if no true label, mask by the max length of capsules. Mainly used for prediction
             # compute lengths of capsules
             x = tf.sqrt(tf.reduce_sum(tf.square(inputs), -1))
+            # print(f"Mask|x|{x}")
             # generate the mask which is a one-hot code.
             # mask.shape=[None, n_classes]=[None, num_capsule]
             mask = tf.one_hot(indices=tf.argmax(x, 1), depth=x.shape[1])
+        # print(f"Mask|mask|{mask}")
+        # print(f"Mask|inputs|{inputs}")
 
         # inputs.shape=[None, num_capsule, dim_capsule]
         # mask.shape=[None, num_capsule]
@@ -98,9 +102,9 @@ class CapsuleLayer(layers.Layer):
     def __init__(self, num_capsule, dim_capsule, routings=3,
                  kernel_initializer='glorot_uniform',
                  **kwargs):
-        self.as_super = super(CapsuleLayer, self)
-        self.as_super.__init__(**kwargs)
-        # super().__init__(**kwargs)
+        # self.as_super = super(CapsuleLayer, self)
+        # self.as_super.__init__(**kwargs)
+        super(CapsuleLayer, self).__init__(**kwargs)
         self.num_capsule = num_capsule
         self.dim_capsule = dim_capsule
         self.routings = routings
@@ -118,8 +122,10 @@ class CapsuleLayer(layers.Layer):
                                  name='W')
 
         self.built = True
+        # print(input_shape)
 
     def call(self, inputs, training=None):
+        # tf.print(inputs, output_stream=sys.stderr)
         # inputs.shape=[None, input_num_capsule, input_dim_capsule]
         # inputs_expand.shape=[None, 1, input_num_capsule, input_dim_capsule, 1]
         inputs_expand = tf.expand_dims(tf.expand_dims(inputs, 1), -1)
@@ -134,30 +140,39 @@ class CapsuleLayer(layers.Layer):
         # Regard the first two dimensions as `batch` dimension, then
         # matmul(W, x): [..., dim_capsule, input_dim_capsule] x [..., input_dim_capsule, 1] -> [..., dim_capsule, 1].
         # inputs_hat.shape = [None, num_capsule, input_num_capsule, dim_capsule]
-        inputs_hat = tf.squeeze(tf.map_fn(lambda x: tf.matmul(self.W, x), elems=inputs_tiled))
+        a = tf.map_fn(lambda x: tf.matmul(self.W, x), elems=inputs_tiled)
+        known_axes = [i for i, size in enumerate(a.shape) if size == 1]
+        # print(f"A: {a}")
+        inputs_hat = tf.squeeze(a, axis=known_axes)
 
-        print(inputs_hat)
-        print(f"|{[inputs.shape, self.num_capsule, 1, self.input_num_capsule]}|")
-        print(f"|{[inputs]}|")
+        # print(f"Inputs_har|{inputs_hat}|")
+        # print(f"Inputs_tiled|{inputs_tiled}|")
+        # print(f"Shape|{[inputs.shape, self.num_capsule, 1, self.input_num_capsule]}|")
+        # print(f"Inputs|{[inputs]}|")
         # Begin: Routing algorithm ---------------------------------------------------------------------#
         # The prior for coupling coefficient, initialized as zeros.
         # b.shape = [None, self.num_capsule, 1, self.input_num_capsule].
-        # b = tf.zeros(shape=[inputs.shape[0], self.num_capsule, 1, self.input_num_capsule])
-        b = tf.zeros(shape=[8, self.num_capsule, 1, self.input_num_capsule])
-
-        print(b)
+        b = tf.zeros(shape=[tf.shape(inputs)[0], self.num_capsule, 1, self.input_num_capsule])
+        # p = tf.keras.layers.Input(dtype=tf.float32, shape=[inputs.shape[0], self.num_capsule, 1, self.input_num_capsule])
+        # b = tf.zeros_like(p)
+        # print(f">>>>>>>>>>>>>>>>>{tf.shape(inputs)}")
+        # print(b)
         assert self.routings > 0, 'The routings should be > 0.'
         for i in range(self.routings):
             # c.shape=[batch_size, num_capsule, 1, input_num_capsule]
+            # print("=" * 40)
+            # print(b)
             c = tf.nn.softmax(b, axis=1)
-
+            # print(c)
             # c.shape = [batch_size, num_capsule, 1, input_num_capsule]
             # inputs_hat.shape=[None, num_capsule, input_num_capsule, dim_capsule]
             # The first two dimensions as `batch` dimension,
             # then matmal: [..., 1, input_num_capsule] x [..., input_num_capsule, dim_capsule] -> [..., 1, dim_capsule].
             # outputs.shape=[None, num_capsule, 1, dim_capsule]
+            # print(c.shape)
+            # print(inputs_hat.shape)
             outputs = squash(tf.matmul(c, inputs_hat))  # [None, 10, 1, 16]
-
+            # print(F">>>>>>>>{outputs}<<<<<<<<<<")
             if i < self.routings - 1:
                 # outputs.shape =  [None, num_capsule, 1, dim_capsule]
                 # inputs_hat.shape=[None, num_capsule, input_num_capsule, dim_capsule]
@@ -167,7 +182,8 @@ class CapsuleLayer(layers.Layer):
                 b += tf.matmul(outputs, inputs_hat, transpose_b=True)
         # End: Routing algorithm -----------------------------------------------------------------------#
 
-        return tf.squeeze(outputs)
+        known_axes = [i for i, size in enumerate(outputs.shape) if size == 1]
+        return tf.squeeze(outputs, axis=known_axes)
 
     def compute_output_shape(self, input_shape):
         return tuple([None, self.num_capsule, self.dim_capsule])
@@ -193,6 +209,7 @@ def PrimaryCap(inputs, dim_capsule, n_channels, kernel_size, strides, padding):
     output = layers.Conv2D(filters=dim_capsule*n_channels, kernel_size=kernel_size, strides=strides, padding=padding,
                            name='primarycap_conv2d')(inputs)
     outputs = layers.Reshape(target_shape=[-1, dim_capsule], name='primarycap_reshape')(output)
+    # outputs = tf.transpose(outputs, perm=[0, 2, 1])
     return layers.Lambda(squash, name='primarycap_squash')(outputs)
 
 

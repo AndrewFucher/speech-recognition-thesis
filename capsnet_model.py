@@ -18,6 +18,7 @@ Author: Xifeng Guo, E-mail: `guoxifeng1990@163.com`, Github: `https://github.com
 
 import numpy as np
 import tensorflow as tf
+from losses import CTCloss
 from tensorflow.keras import layers, models, optimizers
 from tensorflow.keras import backend as K
 from tensorflow.keras.utils import to_categorical
@@ -25,8 +26,10 @@ import matplotlib.pyplot as plt
 from capslayers import CapsuleLayer, PrimaryCap, Length, Mask
 import data_preparer
 from tensorflow.keras import callbacks
+import tensorflow as tf
+from metrics import CERMetric
 
-# K.set_image_data_format('channels_last')
+K.set_image_data_format('channels_last')
 
 
 def CapsNet(input_shape, n_class, routings, batch_size):
@@ -39,21 +42,14 @@ def CapsNet(input_shape, n_class, routings, batch_size):
     :return: Two Keras Models, the first one used for training, and the second one for evaluation.
             `eval_model` can also be used for training.
     """
-    inputs = layers.Input(shape=input_shape, name="input", batch_size=batch_size)
-
-    # expand dims to add channel dimension
-    x = layers.Lambda(lambda x: tf.expand_dims(x, axis=-1))(inputs)
-    # print(f"x layer: {x.output_shape}")
-    
-    # x = layers.Input(shape=input_shape, batch_size=batch_size)
+    x = layers.Input(shape=input_shape, 
+    batch_size=batch_size
+    )
 
     # Layer 1: Just a conventional Conv2D layer
     conv1 = layers.Conv2D(filters=256, kernel_size=9, strides=1, padding='same', activation='relu', name='conv1')(x)
-    conv1 = layers.Conv2D(filters=256, kernel_size=9, strides=1, padding='valid', activation='relu', name='conv1')(x)
-    # print(f"conv1 layer: {conv1.output_shape}")
 
     # Layer 2: Conv2D layer with `squash` activation, then reshape to [None, num_capsule, dim_capsule]
-    # primarycaps = PrimaryCap(conv1, dim_capsule=8, n_channels=32, kernel_size=9, strides=2, padding='valid')
     primarycaps = PrimaryCap(conv1, dim_capsule=8, n_channels=32, kernel_size=9, strides=2, padding='same')
 
     # Layer 3: Capsule layer. Routing algorithm works here.
@@ -64,28 +60,26 @@ def CapsNet(input_shape, n_class, routings, batch_size):
     out_caps = Length(name='capsnet')(digitcaps)
 
     # Decoder network.
-    print((n_class,))
-    y = layers.Input(shape=(n_class,), name="input2")
+    y = layers.Input(shape=(n_class,))
     masked_by_y = Mask()([digitcaps, y])  # The true label is used to mask the output of capsule layer. For training
     masked = Mask()(digitcaps)  # Mask using the capsule with maximal length. For prediction
 
     # Shared Decoder model in training and prediction
     decoder = models.Sequential(name='decoder')
-    decoder.add(layers.Dense(512, activation='relu', input_dim=16 * n_class, name="dense11"))
-    decoder.add(layers.Dense(1024, activation='relu', name="dense22"))
-    decoder.add(layers.Dense(np.prod(input_shape), activation='sigmoid', name="dense33"))
+    decoder.add(layers.Dense(512, activation='relu', input_dim=16 * n_class))
+    decoder.add(layers.Dense(1024, activation='relu'))
+    decoder.add(layers.Dense(np.prod(input_shape), activation='sigmoid'))
     decoder.add(layers.Reshape(target_shape=input_shape, name='out_recon'))
 
     # Models for training and evaluation (prediction)
-    train_model = models.Model([inputs, y], [out_caps, decoder(masked_by_y)])
-    train_model._name="train_model_1111"
-    eval_model = models.Model(inputs, [out_caps, decoder(masked)])
+    train_model = models.Model([x, y], [out_caps, decoder(masked_by_y)])
+    eval_model = models.Model(x, [out_caps, decoder(masked)])
 
     # manipulate model
     noise = layers.Input(shape=(n_class, 16))
     noised_digitcaps = layers.Add()([digitcaps, noise])
     masked_noised_y = Mask()([noised_digitcaps, y])
-    manipulate_model = models.Model([inputs, y, noise], decoder(masked_noised_y))
+    manipulate_model = models.Model([x, y, noise], decoder(masked_noised_y))
     return train_model, eval_model, manipulate_model
 
 
@@ -103,7 +97,7 @@ def margin_loss(y_true, y_pred):
     return tf.reduce_mean(tf.reduce_sum(L, 1))
 
 
-def train(model,  # type: models.Model
+def train(model: tf.keras.models.Model,  # type: models.Model
           dataprovider: data_preparer.DataProvider, args):
     """
     Training a CapsuleNet
@@ -124,7 +118,7 @@ def train(model,  # type: models.Model
     lr_decay = callbacks.LearningRateScheduler(schedule=lambda epoch: args.lr * (args.lr_decay ** epoch))
 
     # compile the model
-    model.compile(optimizer=optimizers.Adam(lr=args.lr),
+    model.compile(optimizer=tf.optimizers.Adam(learning_rate=args.lr),
                   loss=[margin_loss, 'mse'],
                   loss_weights=[1., args.lam_recon],
                   metrics={'capsnet': 'accuracy'})
@@ -150,6 +144,7 @@ def train(model,  # type: models.Model
     #           epochs=args.epochs,
     #           validation_data=((x_test, y_test), (y_test, x_test)), batch_size=args.batch_size,
     #           callbacks=[log, checkpoint, lr_decay])
+    
     model.fit(train_provider,
               steps_per_epoch=int(len(train_provider._dataset) / args.batch_size),
               epochs=args.epochs,
@@ -182,52 +177,13 @@ def test(model, dataprovider, args):
 #     plt.show()
 
 
-def manipulate_latent(model, data, args):
-    print('-' * 30 + 'Begin: manipulate' + '-' * 30)
-    x_test, y_test = data
-    index = np.argmax(y_test, 1) == args.digit
-    number = np.random.randint(low=0, high=sum(index) - 1)
-    x, y = x_test[index][number], y_test[index][number]
-    x, y = np.expand_dims(x, 0), np.expand_dims(y, 0)
-    noise = np.zeros([1, 10, 16])
-    x_recons = []
-    for dim in range(16):
-        for r in [-0.25, -0.2, -0.15, -0.1, -0.05, 0, 0.05, 0.1, 0.15, 0.2, 0.25]:
-            tmp = np.copy(noise)
-            tmp[:, :, dim] = r
-            x_recon = model.predict([x, y, tmp])
-            x_recons.append(x_recon)
-
-    x_recons = np.concatenate(x_recons)
-
-    img = combine_images(x_recons, height=16)
-    image = img * 255
-    Image.fromarray(image.astype(np.uint8)).save(args.save_dir + '/manipulate-%d.png' % args.digit)
-    print('manipulated result saved to %s/manipulate-%d.png' % (args.save_dir, args.digit))
-    print('-' * 30 + 'End: manipulate' + '-' * 30)
-
-
-def load_mnist():
-    # the data, shuffled and split between train and test sets
-    from tensorflow.keras.datasets import mnist
-    (x_train, y_train), (x_test, y_test) = mnist.load_data()
-
-    x_train = x_train.reshape(-1, 28, 28, 1).astype('float32') / 255.
-    x_test = x_test.reshape(-1, 28, 28, 1).astype('float32') / 255.
-    y_train = to_categorical(y_train.astype('float32'))
-    y_test = to_categorical(y_test.astype('float32'))
-    return (x_train, y_train), (x_test, y_test)
-
-
-def main():
+def main(epochs = 1):
     import os
     import argparse
-    from tensorflow.keras.preprocessing.image import ImageDataGenerator
-    from tensorflow.keras import callbacks
 
     # setting the hyper parameters
     parser = argparse.ArgumentParser(description="Capsule Network on MNIST.")
-    parser.add_argument('--epochs', default=5, type=int)
+    parser.add_argument('--epochs', default=epochs, type=int)
     parser.add_argument('--batch_size', default=8, type=int)
     parser.add_argument('--lr', default=0.001, type=float,
                         help="Initial learning rate")
@@ -257,12 +213,12 @@ def main():
 
     # define data provider
     print("Preparing data")
-    dataprovider, input_shape = data_preparer.getDataProvider()
+    dataprovider, input_shape = data_preparer.getDataProvider(load_from_pickle=False)
     print(f"Finished preparing data\nInput shape: {input_shape}")
 
     # define model
     model, eval_model, manipulate_model = CapsNet(input_shape=input_shape,
-                                                  n_class=len(data_preparer.VOCAB) + 1,
+                                                  n_class=len(data_preparer.WORDS),
                                                   routings=args.routings,
                                                   batch_size=args.batch_size)
     model.summary()
